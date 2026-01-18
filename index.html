@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bracket App</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
+
+<style>
+body { font-family: Arial; background:#f2f2f2; margin:0; padding:10px }
+h1,h2 { text-align:center }
+button { padding:8px; margin:4px }
+input, select { padding:6px; width:100%; margin:4px 0 }
+.hidden { display:none }
+.container { max-width:900px; margin:auto; background:white; padding:15px }
+
+.match { border:1px solid #ccc; padding:10px; margin:6px 0; background:#fafafa }
+.round { display:flex; gap:10px; overflow-x:auto }
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<!-- HOME -->
+<div id="home">
+<h1>Saved Brackets</h1>
+<div id="saved"></div>
+<button onclick="showCreate()">➕ New Bracket</button>
+</div>
+
+<!-- CREATE -->
+<div id="create" class="hidden">
+<h2>Create Bracket</h2>
+
+<input id="bracketName" placeholder="Bracket Name">
+
+<select id="playerSelect"></select>
+<input id="newPlayer" placeholder="Or add new player">
+<button onclick="addPlayer()">Add Player</button>
+
+<ul id="playerList"></ul>
+
+<button onclick="start()">Start Bracket</button>
+<button onclick="goHome()">Cancel</button>
+</div>
+
+<!-- BRACKET -->
+<div id="bracket" class="hidden">
+<h2 id="title"></h2>
+<div id="rounds"></div>
+<button onclick="finish()">Finish Bracket</button>
+<button onclick="goHome()">Exit</button>
+</div>
+
+</div>
+
+<script>
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js");
+}
+
+let current = null;
+let selectedPlayers = [];
+
+/* NAV */
+function showCreate() {
+  home.classList.add("hidden");
+  create.classList.remove("hidden");
+  loadPlayerDropdown();
+  renderPlayerList();
+}
+function goHome() {
+  create.classList.add("hidden");
+  bracket.classList.add("hidden");
+  home.classList.remove("hidden");
+  loadSaved();
+}
+
+/* PLAYERS */
+function getPlayers() {
+  return JSON.parse(localStorage.getItem("players")) || [];
+}
+function savePlayer(name) {
+  const players = getPlayers();
+  if (!players.includes(name)) {
+    players.push(name);
+    localStorage.setItem("players", JSON.stringify(players));
+  }
+}
+function loadPlayerDropdown() {
+  const select = playerSelect;
+  select.innerHTML = `<option value="">Select existing player</option>`;
+  getPlayers().forEach(p => {
+    const o = document.createElement("option");
+    o.value = p;
+    o.textContent = p;
+    select.appendChild(o);
+  });
+}
+function addPlayer() {
+  const name = newPlayer.value.trim() || playerSelect.value;
+  if (!name || selectedPlayers.includes(name)) return;
+  selectedPlayers.push(name);
+  savePlayer(name);
+  newPlayer.value = "";
+  renderPlayerList();
+  loadPlayerDropdown();
+}
+function renderPlayerList() {
+  playerList.innerHTML = "";
+  selectedPlayers.forEach(p => {
+    const li = document.createElement("li");
+    li.innerHTML = `${p} <button onclick="removePlayer('${p}')">❌</button>`;
+    playerList.appendChild(li);
+  });
+}
+function removePlayer(name) {
+  selectedPlayers = selectedPlayers.filter(p => p !== name);
+  renderPlayerList();
+}
+
+/* START */
+function start() {
+  if (!bracketName.value || selectedPlayers.length < 2) {
+    alert("Enter a name and at least 2 players");
+    return;
+  }
+
+  current = {
+    id: Date.now(),
+    name: bracketName.value,
+    players: [...selectedPlayers],
+    rounds: []
+  };
+
+  buildRounds(selectedPlayers);
+  title.innerText = current.name;
+
+  create.classList.add("hidden");
+  bracket.classList.remove("hidden");
+  renderBracket();
+}
+
+/* BRACKET LOGIC */
+function buildRounds(players) {
+  let r = [...players];
+  while (r.length > 1) {
+    const round = [];
+    for (let i = 0; i < r.length; i += 2) {
+      round.push({ a:r[i], b:r[i+1]||"BYE", sa:null, sb:null, w:null });
+    }
+    current.rounds.push(round);
+    r = new Array(round.length).fill(null);
+  }
+}
+function renderBracket() {
+  rounds.innerHTML = "";
+  current.rounds.forEach((round, ri) => {
+    const div = document.createElement("div");
+    div.className = "round";
+    round.forEach((m, mi) => {
+      const match = document.createElement("div");
+      match.className = "match";
+      match.innerHTML = `
+        <b>${m.a}</b>
+        <input type="number" onchange="score(${ri},${mi},1,this.value)">
+        <b>${m.b}</b>
+        <input type="number" onchange="score(${ri},${mi},2,this.value)">
+        Winner: <b>${m.w || "-"}</b>
+      `;
+      div.appendChild(match);
+    });
+    rounds.appendChild(div);
+  });
+}
+function score(r,m,p,v) {
+  const match = current.rounds[r][m];
+  if (p===1) match.sa = +v;
+  if (p===2) match.sb = +v;
+  if (match.sa!=null && match.sb!=null) {
+    match.w = match.sa > match.sb ? match.a : match.b;
+    if (current.rounds[r+1]) {
+      const n = Math.floor(m/2);
+      current.rounds[r+1][n][m%2?"b":"a"] = match.w;
+    }
+  }
+  renderBracket();
+}
+
+/* SAVE */
+function finish() {
+  const all = JSON.parse(localStorage.getItem("brackets")) || [];
+  all.push(current);
+  localStorage.setItem("brackets", JSON.stringify(all));
+  selectedPlayers = [];
+  current = null;
+  goHome();
+}
+function loadSaved() {
+  saved.innerHTML = "";
+  (JSON.parse(localStorage.getItem("brackets")) || []).forEach(b => {
+    const div = document.createElement("div");
+    div.className = "match";
+    div.innerHTML = `
+      <b>${b.name}</b><br>
+      Players: ${b.players.length}<br>
+      <button onclick="openBracket(${b.id})">Open</button>
+      <button onclick="deleteBracket(${b.id})">Delete</button>
+    `;
+    saved.appendChild(div);
+  });
+}
+function openBracket(id) {
+  const all = JSON.parse(localStorage.getItem("brackets"));
+  current = all.find(b => b.id === id);
+  title.innerText = current.name;
+  home.classList.add("hidden");
+  bracket.classList.remove("hidden");
+  renderBracket();
+}
+function deleteBracket(id) {
+  let all = JSON.parse(localStorage.getItem("brackets")) || [];
+  all = all.filter(b => b.id !== id);
+  localStorage.setItem("brackets", JSON.stringify(all));
+  loadSaved();
+}
+
+loadSaved();
+</script>
+</body>
+</html>
